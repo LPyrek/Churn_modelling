@@ -1,0 +1,778 @@
+---
+title: "**MLProjekt**"
+author: "Łukasz Pyrek"
+date: "2025-01-11"
+output: 
+  html_document:
+    self_contained: true
+    code_folding: hide
+    toc: true
+    toc_float:
+      collapsed: true
+    theme: simplex
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{=html}
+<style type="text/css">
+  body{
+  font-size: 12pt;
+  text-align: justify;
+}
+</style>
+```
+
+------------------------------------------------------------------------
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## **Introduction**  
+
+The aim of this project is to analyze the phenomenon of customer churn in the banking sector using the *Bank Customer Churn* dataset. The main objective is to investigate which factors influence a customer's decision to terminate cooperation with the bank and to develop machine learning models capable of predicting this phenomenon.  
+
+-------
+
+## **Loading Libraries**  
+
+```{r, warning=FALSE}
+library(reticulate)
+library(rstudioapi)
+#setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+```
+
+```{python collapsed-chunk}
+import pandas as pd
+import numpy as np
+from scipy import stats
+
+from sklearn.model_selection import cross_validate, train_test_split, GridSearchCV
+from sklearn.metrics import make_scorer, accuracy_score, recall_score ,classification_report, confusion_matrix, precision_score, ConfusionMatrixDisplay
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.inspection import permutation_importance
+
+import shap
+import dalex as dx
+
+import kaleido
+import plotly.graph_objects as go
+from IPython.display import Image, display
+
+
+from imblearn.over_sampling import SMOTE, SMOTENC
+from imblearn.pipeline import Pipeline as Pipeline_imb
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+```
+
+------------------------------------------------------------------------
+
+## **Loading Data and Initial Processing**
+
+Source: https://www.kaggle.com/datasets/shubhammeshram579/bank-customer-churn-prediction
+
+### Loading and Displaying Data
+
+```{python}
+df = pd.read_csv('Churn_Modelling.csv')
+```
+
+```{r}
+# R code to show scrollable table
+table <- kableExtra::kable_styling(kableExtra::kable(head(py$df, 15), "html"),
+                            bootstrap_options = "striped", full_width = FALSE)
+
+scrollable_table <- kableExtra::scroll_box(table, width = "100%", height = "auto")
+scrollable_table
+```
+
+<br/><br/> Data dimensions:
+
+```{python}
+df.shape
+```
+
+The dataset consists of 11 columns and 10,002 observations (rows). <br/><br/> 
+Removing variables not needed for analysis: *RowNumber*, *CustomerId* and
+*Surname*.
+
+```{python}
+df = df.drop(["RowNumber", "CustomerId", "Surname"], axis = 1)
+```
+
+------------------------------------------------------------------------
+
+### Missing Data
+
+```{python}
+df.isnull().sum()
+```
+
+There are a few missing values in the dataset. Due to their small quantity, we remove them.
+
+```{python}
+df = df.dropna()
+```
+
+------------------------------------------------------------------------
+
+### Data duplications
+
+```{python}
+df.duplicated().sum()
+```
+
+There are 2 duplicate entries in the dataset, which we remove.
+
+```{python}
+df = df.drop_duplicates()
+```
+
+Data dimensions after removing missing values and duplicates.
+
+```{python}
+df.shape
+```
+
+------------------------------------------------------------------------
+
+## **EDA**
+
+### Variable descritpion
+
+| **Variable Name**    | **Description**                                               |
+|----------------------|---------------------------------------------------------------|
+| **Credit Score**      | A numerical value representing the customer's creditworthiness |
+| **Geography**         | The country of residence of the customer (France, Spain, or Germany) |
+| **Gender**            | The gender of the customer (Male or Female)                     |
+| **Age**               | The age of the customer                                         |
+| **Tenure**            | The number of years the customer has been with the bank         |
+| **Balance**           | The account balance of the customer                              |
+| **NumOfProducts**     | The number of banking products the customer uses                 |
+| **HasCrCard**         | Whether the customer has a credit card (1 = Yes, 0 = No)         |
+| **IsActiveMember**    | Whether the customer is an active member (1 = Yes, 0 = No)      |
+| **EstimatedSalary**   | The estimated salary of the customer                            |
+| **Exited**            | Whether the customer has left the bank (1 = Yes, 0 = No)  
+
+<br><br>
+
+------------------------------------------------------------------------
+
+### Descriptive Statistics
+
+```{python}
+df_describe = df.describe().round(3)
+```
+
+```{r}
+# R code to show scrollable table
+table <- kableExtra::kable_styling(kableExtra::kable(py$df_describe, "html"),
+                            bootstrap_options = "striped", full_width = FALSE)
+
+scrollable_table <- kableExtra::scroll_box(table, width = "100%", height = "auto")
+scrollable_table
+```
+
+<br><br>
+
+| **Variable Name**    | **Description**                                                                                                                                                                                                                                                                                    |
+|----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **CreditScore**       | The average credit score of customers is 650.5. The minimum value is 350, and the maximum is 850. 25% of customers have a credit score below 584, and 75% have a score below 717.25. The standard deviation is 96.63, indicating variation in credit scores. |
+| **Age**               | The average age of customers is about 38.9 years. The youngest customer is 18 years old, and the oldest is 92. 50% of customers are below 37 years old, and 75% are below 44 years old.                                                                                                           |
+| **Tenure**            | The average tenure of customers is 5 years. Tenure ranges from 0 years (no history) to 10 years. Most customers (50%) have a tenure of no more than 5 years.                                                                                                                                      |
+| **Balance**           | The average account balance is 76,476.26. The minimum balance is 0 (no funds), and the maximum is 250,898.09. 50% of customers have a balance above 97,173.29, indicating a significant number of customers with substantial funds.                                                                 |
+| **NumOfProducts**     | The average number of products held is 1.53. Customers hold between 1 and 4 products. 75% of customers have no more than 2 products, indicating a dominance of fewer products.                                                                                                                   |
+| **HasCrCard**         | 70.5% of customers have a credit card. The remaining 29.5% do not use credit cards.                                                                                                                                                                                                                   |
+| **IsActiveMember**    | 51.5% of customers are active members, while 48.5% are inactive. There is a roughly equal distribution between active and inactive members.                                                                                                                                                          |
+| **EstimatedSalary**   | The average salary is 100,106.70. Salaries range from 11.58 to 199,992.48. 50% of customers earn less than 100,238.11.                                                                                                                                                                            |
+| **Exited**            | About 20.4% of customers have left the bank, while 79.6% remain with the bank.                                                                                                                                                                                                                         |
+
+
+<br><br>
+
+------------------------------------------------------------------------
+
+### Data visualizations
+
+```{python}
+CLR = '#e0240c'
+```
+
+#### **Gender**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='Gender', orient='h', color=CLR)
+
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+
+plt.title('Number of customers by Gender')
+plt.xlabel('Number of customers')
+plt.ylabel('Gender')
+plt.show()
+
+```
+
+<br>
+
+#### **Geography**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='Geography', orient='h', color=CLR)  
+
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+                  
+plt.title('Number of customers by Country')
+plt.xlabel('Number of customers')
+plt.ylabel('Country')
+plt.show()
+```
+
+<br>
+
+#### **Tenure**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='Tenure', orient='h', color=CLR)  
+
+for container in p.containers:
+    plt.bar_label(container, label_type="edge", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+
+plt.title('Number of customers by Tenure')
+plt.xlabel('Number of customers')
+plt.ylabel('Tenure (years)')
+plt.show()
+```
+
+<br>
+
+#### **NumOfProducts**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='Gender', orient='h', color=CLR)
+
+# Add text inside the bars
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+
+
+
+
+plt.title('Number of customers by Number of Products')
+plt.xlabel('Number of customers')
+plt.ylabel('Number of Products')
+plt.show()
+```
+
+<br>
+
+#### **HasCrCard**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='HasCrCard', orient='h', color=CLR)  
+
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+                  
+plt.title('Number of customers with/without a Credit Card')
+plt.xlabel('Number of customers')
+plt.ylabel('Has Credit Card')
+plt.show()
+```
+
+<br>
+
+#### **IsActiveMember**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='IsActiveMember', orient='h', color=CLR)  
+
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+                  
+plt.title('Number of Active/Inactive customers')
+plt.xlabel('Number of customers')
+plt.ylabel('Active Member')
+plt.show()
+```
+
+<br>
+
+#### **Exited**
+
+```{python}
+plt.figure(figsize=(8,6))
+p = sns.countplot(data=df, x='Exited', orient='h', color=CLR)  
+
+for container in p.containers:
+    plt.bar_label(container, label_type="center", color="#26090b", fontsize=12, weight='bold', padding=6, 
+                  bbox={"boxstyle": "round", "pad": 0.2, "facecolor": 'white', "alpha": 1})
+                  
+plt.title('Number of customers who Exited')
+plt.xlabel('Number of customers')
+plt.ylabel('Exited')
+plt.show()
+```
+
+The dataset is highly imbalanced, with 80% of individuals staying with the bank and 20% choosing to leave. <br>
+
+#### **Age**
+
+```{python}
+plt.figure(figsize=(8,6))
+sns.histplot(df['Age'], kde=True, color=CLR, bins=30)  
+plt.title('Distribution of Customer Age')
+plt.xlabel('Age')
+plt.ylabel('Frequency')
+
+plt.show()
+```
+
+<br>
+
+#### **Balance**
+
+```{python}
+plt.figure(figsize=(8,6))
+sns.histplot(df['Balance'], kde=True, color=CLR, bins=30)  
+plt.title('Distribution of Customer Balance')
+plt.xlabel('Balance')
+plt.ylabel('Frequency')
+
+plt.show()
+```
+
+The distribution of customer balances, excluding the value 0, resembles a normal distribution. The presence of a large number of accounts with a zero balance may suggest that these are inactive accounts or newly opened accounts.
+
+<br>
+
+#### **CreditScore**
+
+```{python}
+plt.figure(figsize=(8,6))
+sns.histplot(df['CreditScore'], kde=True, color=CLR, bins=30) 
+plt.title('Distribution of Credit Score')
+plt.xlabel('Credit Score')
+plt.ylabel('Frequency')
+
+plt.show()
+```
+
+There is a concentration in the range of 600-700, suggesting that most individuals have moderately good credit scores. A smaller peak around 800-850 indicates the presence of a smaller group of customers with exceptionally high scores.
+
+<br>
+
+#### **EstimatedSalary**
+
+```{python}
+plt.figure(figsize=(8,6))
+sns.histplot(df['EstimatedSalary'], kde=True, color=CLR, bins=30) 
+plt.title('Distribution of Estimated Salary')
+plt.xlabel('Estimated Salary')
+plt.ylabel('Frequency')
+
+plt.show()
+```
+
+The salaries follow a uniform distribution, with no strong concentration of salaries within a specific range. Salaries range from 0 to 200,000.
+
+<br>
+
+#### Visualizations by Target Variable
+
+```{python}
+fig, axes = plt.subplots(3, 2, figsize=(12, 18))  # 3 rows, 2 columns of subplots
+
+variables = ['NumOfProducts', 'HasCrCard', 'Geography', 'Gender', 'Tenure', 'IsActiveMember']
+
+for i, var in enumerate(variables):
+    ax = axes[i//2, i%2]  
+    sns.countplot(data=df, x=var, hue='Exited', ax=ax, palette=['lightgray',CLR,])  
+    
+    ax.set_title(f'{var} by Exited', fontsize=14)
+    ax.set_xlabel(var, fontsize=12)
+    ax.set_ylabel('Number of customers', fontsize=12)
+
+plt.tight_layout()
+
+plt.show()
+```
+
+### Outliers
+
+```{python}
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))  
+
+variables = ['CreditScore', 'Age', 'Balance', 'EstimatedSalary']
+
+for i, var in enumerate(variables):
+    ax = axes[i//2, i%2]
+    sns.boxplot(data=df, x=var, ax=ax, color=CLR)  
+    
+    ax.set_title(f'{var}', fontsize=14)
+    ax.set_xlabel('Value', fontsize=12)
+    ax.set_ylabel(var, fontsize=12)
+
+plt.tight_layout()
+
+plt.show()
+
+```
+
+Observations outside the whiskers of the box plots appear to be natural (e.g., in the case of age data) and provide additional insights into the data distribution, so we decide to keep them.
+
+### Impact of the target variable
+
+Correlations for the target variable with respect to quantitative variables were calculated using point-biserial correlation, while for binary and categorical variables, Cramér's V coefficient was applied.
+
+```{python}
+
+continuous_vars = ['CreditScore','Age', 'Balance', 'EstimatedSalary', 'Tenure']
+categorical_vars = ['Gender', 'HasCrCard', 'IsActiveMember','Geography', 'NumOfProducts']
+
+correlation_results = {}
+
+# Calculate Point-Biserial correlation for continuous variables
+for var in continuous_vars:
+    correlation, p_value = stats.pointbiserialr(df['Exited'], df[var])
+    correlation_results[f'Exited vs {var} (Point-Biserial Correlation)'] = {'Score': correlation, 'p-value': p_value}
+
+# Calculate V Cramers coefficient for categorical and binary variables 
+def cramers_v(confusion_matrix):
+    chi2, p_value, dof, expected = stats.chi2_contingency(confusion_matrix)
+    return np.sqrt(chi2 / (df.shape[0] * (min(confusion_matrix.shape) - 1)))
+  
+for var in categorical_vars:
+    confusion_matrix = pd.crosstab(df['Exited'], df[var])
+    cramers_v_val = cramers_v(confusion_matrix)
+    correlation_results[f'Exited vs {var} (Cramér\'s V)'] = {'Score': cramers_v_val, 'p-value': None}  
+    
+correlation_df = pd.DataFrame(correlation_results).T
+
+correlation_df
+```
+
+It is evident that only two variables show significant relationships with the target variable: <br>
+
+- **Age**: The correlation coefficient is 0.28, meaning that as age increases, the probability of leaving the bank rises. <br>
+- **NumOfProducts**: The Cramér's V coefficient is 0.39, indicating a moderate association. Additionally, analyzing the plot, it can be concluded that as the number of products used by the customer increases, the probability of leaving decreases. <br>
+<br><br>
+
+These variables will likely have a significant impact on the classification.
+<br><br><br>
+
+## **Modeling**
+
+
+We will build three models: KNN, SVM, and RandomForest, after preparing the data (balancing and standardization). For each algorithm, we will select the best model by performing hyperparameter tuning using GridSearchCV. The model evaluation will be based on accuracy calculated using 5-fold cross-validation. <br><br>
+
+### Train-Test split
+
+80% - Training set <br> 20% - Test set
+
+```{python}
+X = df.drop(['Exited'], axis=1)
+y = df['Exited']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+```
+
+### KNN
+
+
+The data has been balanced using the SMOTENC algorithm, which is adapted for categorical variables, and then standardized. The categorical variable columns have been encoded using one-hot encoding.
+<br><br>
+
+Pipeline:
+
+-   SMOTENC
+-   StandardScaler
+-   OneHotEncoder
+-   KNN
+
+Grid of tested parameters:
+
+-   'n_neighbors': [3, 5, 7, 9, 11, 13, 15, 17, 19]
+-   'weights': ['uniform', 'distance']
+-   'p': [1, 2]
+
+```{python}
+#KNN
+scoring = {
+    'accuracy': 'accuracy',
+    'recall': make_scorer(precision_score),
+    'specificity': make_scorer(recall_score, pos_label=0, average='weighted')
+}
+
+param_grid_knn = {
+    'classifier__n_neighbors': [3, 5, 7, 9, 11, 13, 15, 17, 19],
+    'classifier__weights': ['uniform', 'distance'],
+    'classifier__p': [1, 2]  # p=1 for Manhattan distance, p=2 for Euclidean distance
+}
+
+encoder_scaler = ColumnTransformer(
+    transformers=[
+        ('onehot', OneHotEncoder(handle_unknown='ignore'), ['Geography', 'Gender', 'NumOfProducts']),
+        ('scaler', StandardScaler(), ['CreditScore', 'Age', 'Balance', 'EstimatedSalary'])  
+    ],
+    remainder='passthrough'  
+)
+
+categorical_features=['Gender','HasCrCard','IsActiveMember','Geography','NumOfProducts']
+
+pipeline_knn = Pipeline_imb([
+    ('smote', SMOTENC(random_state=42, categorical_features=categorical_features)),  
+    ('encoder_scaler', encoder_scaler),  
+    ('classifier', KNeighborsClassifier())  
+])
+
+grid_search_knn = GridSearchCV(pipeline_knn, param_grid_knn, cv=5, scoring=scoring, refit='accuracy', n_jobs=-1)
+grid_search_knn.fit(X_train, y_train)
+
+print("Best parameters found:", grid_search_knn.best_params_)
+print("Best cross-validation accuracy:", grid_search_knn.best_score_)
+
+print("Test set accuracy:", grid_search_knn.score(X_test, y_test))
+```
+
+### SVM(rbf kernel)
+
+For this algorithm, better results are achieved by balancing the data using the SMOTE algorithm on the already encoded categorical data in one-hot encoding format, rather than applying the SMOTENC algorithm first. This creates unnatural, synthetic observations where binary variables take values other than 0 and 1. However, due to better results, we decide to go with this solution. <br><br>
+
+Pipeline:
+
+-   OneHotEncoder
+-   StandardScaler
+-   SMOTE
+-   SVM
+
+Grid of tested parameters:
+
+-   'C': [0.1, 1, 10, 100, 1000]\
+-   'gamma': [1, 0.1, 0.01, 0.001, 0.0001]
+
+```{python}
+#SVM
+param_grid_svm = {
+    'classifier__C': [0.1, 1, 10, 100, 1000],       
+    'classifier__gamma': [1, 0.1, 0.01, 0.001, 0.0001]
+}
+
+pipeline_svm = Pipeline_imb([
+    ('encode_scale', encoder_scaler),   
+    ('smote', SMOTE(random_state=42)),
+    ('classifier', SVC(random_state=42, kernel='rbf'))  
+])
+
+
+grid_search_svm = GridSearchCV(pipeline_svm, param_grid_svm, cv=5, scoring=scoring, refit='accuracy', n_jobs=-1)
+grid_search_svm.fit(X_train, y_train)
+
+print("Best parameters found:", grid_search_svm.best_params_)
+print("Best cross-validation accuracy:", grid_search_svm.best_score_)
+
+print("Test set accuracy:", grid_search_svm.score(X_test, y_test))
+```
+
+### Random Forest
+
+For the same reason as with SVM, the SMOTE algorithm was used to balance the data. <br><br>
+
+Pipeline:
+
+-   OneHotEncoder
+-   StandardScaler
+-   SMOTE
+-   RandomForest
+
+<br> Grid of tested parameters:
+
+-   'n_estimators': [50, 100, 200, 300]
+-   'max_depth': [None, 10, 20, 30]
+-   'min_samples_split': [2, 5, 10, 15]
+-   'min_samples_leaf': [1, 2, 5, 10]
+
+```{python}
+#RandomForest
+param_grid_forest = {
+    'classifier__n_estimators': [50, 100, 200, 300],
+    'classifier__max_depth': [None, 10, 20, 30],
+    'classifier__min_samples_split': [2, 5, 10, 15],
+    'classifier__min_samples_leaf': [1, 2, 5, 10]
+    }
+
+encoder = ColumnTransformer(
+    transformers=[
+        ('onehot', OneHotEncoder(handle_unknown='ignore'), ['Geography', 'Gender', 'NumOfProducts']) 
+    ],
+    remainder='passthrough' 
+)
+
+pipeline_forest = Pipeline_imb([
+    ('encode', encoder), 
+    ('smote', SMOTE(random_state=42)),  
+    ('classifier', RandomForestClassifier(random_state=42)) 
+])
+
+
+grid_search_forest = GridSearchCV(pipeline_forest, param_grid_forest, cv=5, scoring=scoring, refit='accuracy', n_jobs=-1)
+grid_search_forest.fit(X_train, y_train)
+
+print("Best parameters found:", grid_search_forest.best_params_)
+print("Best cross-validation accuracy:", grid_search_forest.best_score_)
+
+print("Test set accuracy:", grid_search_forest.score(X_test, y_test))
+```
+
+## **Model Comparison and Interpretation**
+
+```{python}
+def scores(y_true, y_pred):
+    acc = accuracy_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred)
+    spe = recall_score(y_true, y_pred, pos_label=0)
+    return [acc, rec, spe]
+
+df_plot = pd.DataFrame(columns=['model', 'Accuracy', 'Recall', 'Specificity'])
+df_plot2 = pd.DataFrame(columns=['model', 'Accuracy', 'Recall', 'Specificity'])
+
+for (i,model), name in zip(enumerate([grid_search_knn, grid_search_svm, grid_search_forest]), ['KNN', 'SVM', 'Random Forest']):
+    idx = model.best_index_
+    cv_results = pd.DataFrame(model.cv_results_)
+    res = cv_results[['mean_test_accuracy', 'mean_test_specificity', 'mean_test_recall']]
+    df_plot.loc[i] = np.append(name, res.iloc[idx, :])
+    df_plot2.loc[i] = np.append(name, scores(y_test, model.best_estimator_.predict(X_test)))
+
+df_plot.iloc[:, 1:] = df_plot.iloc[:, 1:].astype(float)
+df_plot2.iloc[:, 1:] = df_plot2.iloc[:, 1:].astype(float)
+
+
+fig, axes = plt.subplots(1, 2, figsize=(15,7),sharey=True)
+
+# Plot for CV scores
+sns.barplot(data=df_plot.melt(id_vars='model'), y='variable', x='value', hue='model', orient='h', ax=axes[0], legend = False)
+axes[0].set_title('Comparison of best models by CV scores')
+for container in axes[0].containers:
+    axes[0].bar_label(container, fmt='%.3f', label_type='center')
+
+# Plot for test scores
+sns.barplot(data=df_plot2.melt(id_vars='model'), y='variable', x='value', hue='model', orient='h', ax=axes[1])
+axes[1].set_title('Comparison of best models by Test scores')
+axes[1].legend(loc='upper right', bbox_to_anchor=(1.4, 1))
+for container in axes[1].containers:
+    axes[1].bar_label(container, fmt='%.3f', label_type='center')
+
+plt.tight_layout()
+plt.show()
+```
+
+Random Forest achieved the best results on the training set, obtaining the highest values for most cross-validation metrics such as Accuracy, Recall, and Specificity.
+
+However, on the test set, there is a noticeable drop in performance for all models, especially in the Recall metric, when transitioning from cross-validation to the test set. The models struggle with detecting positive cases, which is due to the fact that this was the minority class.
+
+The Random Forest model, despite having the highest Accuracy, achieved the lowest Recall, meaning it performs the worst in identifying positive cases. KNN and SVM models perform better in this regard, but KNN has a significantly lower overall effectiveness. Therefore, the SVM model was selected as the final model.
+
+## **Interpretality of SVM**
+
+### Variable impact
+
+```{python, results='hide'}
+explainer = dx.Explainer(grid_search_svm.best_estimator_, X_test, y_test, label="SVM Model")
+```
+
+```{python}
+vi = explainer.model_parts()
+```
+```{python}
+plt = vi.plot(show=False)
+
+# make plot static to show in html
+plt = go.Figure(plt)
+
+plt.write_image("vi_plot.png", engine="kaleido")
+```
+![](vi_plot.png) 
+
+In the analyzed SVM model, the number of products owned and the age of the customer have by far the greatest impact on predictions. Slightly smaller, but still significant, are the geographic location and active membership status. Other variables, such as credit score, salary, gender, credit card ownership, and tenure, have a much smaller influence on the model's results.
+
+
+### Partial Dependence Plots
+
+Partial dependence plots show how the prediction changes on average as one feature varies while keeping the other features constant.
+
+#### PDP for Categorical Variables
+
+```{python, results='hide'}
+for var in categorical_features:
+    X_test[var] = X_test[var].astype('category')
+pd_profile_cat = explainer.model_profile(variables=categorical_features, type='partial', variable_type='categorical')
+pd_profile_cont = explainer.model_profile(variables=['CreditScore','Age','Tenure','Balance','EstimatedSalary'], type='partial')
+# make plot static to show in html
+plt2 = go.Figure(pd_profile_cat.plot(show=False))
+plt3 = go.Figure(pd_profile_cont.plot(show=False))
+plt2.write_image("pdpcat_plot.png", engine="kaleido")
+plt3.write_image("pdpcont_plot.png", engine="kaleido")
+```
+![](pdpcat_plot.png) 
+
+It can be observed that the variable NumOfProducts has the greatest impact on predictions. Values of 3 and 4 for this variable strongly indicate customer churn (Exited = 1). This observation is consistent with the results presented in the EDA chapter. The frequency distribution plot for this variable showed that when NumOfProducts is 3 or 4, nearly all observations had the target variable (Exited) equal to 1. The V-Cramer value was also high.
+
+Another significant variable appears to be IsActiveMember. <br> 
+
+The remaining categorical variables have little impact on predictions.
+
+#### PDP for Quantitative Variables
+
+![](pdpcont_plot.png) 
+
+The values of the variables CreditScore, Tenure, and EstimatedSalary do not have a significant impact on the prediction, as they remain relatively constant. On the other hand, the variables Age and Balance show a significant influence. The closer the customer is to the age of 55, the higher the likelihood of churn. For Balance, in the upper range (above 180k), it can be observed that the higher the account balance, the greater the risk of customer departure.
+
+### Average SHAP Values
+
+Let's now check how individual features affect the predictions for a single random observation.
+
+```{python}
+observation = X_test.iloc[[555]]
+shap = explainer.predict_parts(observation, type = 'shap')
+plt5 = go.Figure(shap.plot(show=False))
+plt5.write_image("plt5shap_plot.png", engine="kaleido")
+```
+
+![](plt5shap_plot.png) 
+
+As seen in the PDP plots, for the most important variable NumOfProducts, a value of 2 indicates the lowest likelihood of customer churn. This aligns with the SHAP plot, where this feature primarily determined the prediction decision.
+
+## **Summary**
+
+The project aimed to analyze the phenomenon of customer churn in the banking sector. The "The bank customer churn dataset" was used. The main task was to examine the factors influencing a customer's decision to leave and to create machine learning models to predict this phenomenon.
+
+<br> Three classification models were built: KNN, SVM (with an RBF kernel), and Random Forest. <br> Random Forest achieved the best results in cross-validation (CV), obtaining the highest values for Accuracy, Recall, and Specificity. <br> On the test set, there was a decrease in performance for all models, particularly in the Recall metric, indicating difficulties in identifying positive cases (customer churn). <br> Despite the highest Accuracy in CV, Random Forest had the lowest Recall on the test set. <br> SVM proved to be the best compromise between Accuracy and Recall on the test set and was chosen as the final model (accuracy = 0.835). <br> By conducting EDA and analyzing model interpretability plots, it was found that the most important variables influencing customer churn were Age and NumOfProducts. <br> The model can still be improved by, for example, changing threshold values, transforming and creating new variables (Feature Engineering), or using other models like CatBoost or GradientBoosting.
+
+
+
+
